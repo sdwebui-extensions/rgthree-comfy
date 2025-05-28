@@ -46,13 +46,4 @@ if not LOGO_URL.endswith('.svg'):
   raise ValueError('Bad logo url.')
 
 # Fetch the logo so we have any updated markup.
-try:
-  LOGO_SVG = requests.get(
-    LOGO_URL,
-    headers={"user-agent": f"rgthree-comfy/{VERSION}"},
-    timeout=10
-  ).text
-  LOGO_SVG = re.sub(r'(id="bg".*fill=)"[^\"]+"', r'\1"{bg}"', LOGO_SVG)
-  LOGO_SVG = re.sub(r'(id="fg".*fill=)"[^\"]+"', r'\1"{fg}"', LOGO_SVG)
-except Exception:
-  LOGO_SVG = '<svg></svg>'
+LOGO_SVG = '<svg></svg>'
