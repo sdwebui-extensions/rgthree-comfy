@@ -13,17 +13,18 @@ import random
 import dataclasses
 import re
 import time
-
-from typing import Any, Callable
 import operator as op
+
+from typing import Any, Callable, Optional, Union
+
 from .constants import get_category, get_name
-from .utils import FlexibleOptionalInputType, any_type, get_dict_value
-from .log import log_node_warn
+from .utils import ByPassTypeTuple, FlexibleOptionalInputType, any_type, get_dict_value
+from .log import log_node_error, log_node_warn
 
 from .power_lora_loader import RgthreePowerLoraLoader
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
+@dataclasses.dataclass(frozen=True) # Note, kw_only=True is only python 3.10+
 class Function():
   """Function data.
 
@@ -34,8 +35,8 @@ class Function():
   """
 
   name: str
-  call: Callable | str
-  args: tuple[int, int | None]
+  call: Union[Callable, str]
+  args: tuple[int, Optional[int]]
 
 
 _FUNCTIONS = {
@@ -55,6 +56,8 @@ _FUNCTIONS = {
     Function(name="float", call=float, args=(1, 1)),
     Function(name="str", call=str, args=(1, 1)),
     Function(name="bool", call=bool, args=(1, 1)),
+    Function(name="list", call=list, args=(1, 1)),
+    Function(name="tuple", call=tuple, args=(1, 1)),
     # Special
     Function(name="node", call='_get_node', args=(0, 1)),
     Function(name="nodes", call='_get_nodes', args=(0, 1)),
@@ -79,10 +82,7 @@ _SPECIAL_FUNCTIONS = {
 # not connected to ours (like looking up a node in the prompt). Using these means downstream nodes
 # would always be run; that is fine for something like a final JSON output, but less so for a prompt
 # text.
-_NON_DETERMINISTIC_FUNCTION_CHECKS = [
-  r'(?<!input_)(nodes?)\(',
-  r'(?<!\.)(random_(int|choice))\(',
-]
+_NON_DETERMINISTIC_FUNCTION_CHECKS = [r'(?<!input_)(nodes?)\(', r'(?<!\.)(random_(int|choice))\(',]
 
 _OPERATORS = {
   ast.Add: op.add,
@@ -125,8 +125,8 @@ class RgthreePowerPuter:
       },
     }
 
-  RETURN_TYPES = (any_type,)
-  RETURN_NAMES = ('*',)
+  RETURN_TYPES = ByPassTypeTuple((any_type,))
+  RETURN_NAMES = ByPassTypeTuple(("*",))
   FUNCTION = "main"
 
   @classmethod
@@ -154,44 +154,79 @@ class RgthreePowerPuter:
 
   def main(self, **kwargs):
     """Does the nodes' work."""
-    # print('\n\nRUN!\n\n')
-    output = kwargs['output']
     code = kwargs['code']
     unique_id = kwargs['unique_id']
     pnginfo = kwargs['extra_pnginfo']
     workflow = pnginfo["workflow"] if "workflow" in pnginfo else {"nodes": []}
     prompt = kwargs['prompt']
 
+    outputs = get_dict_value(kwargs, 'outputs.outputs', None)
+    if not outputs:
+      output = kwargs.get('output', None)
+      if not output:
+        output = 'STRING'
+      outputs = [output]
+
     ctx = {}
     # Set variable names, defaulting to None instead of KeyErrors
     for c in list('abcdefghijklmnopqrstuvwxyz'):
       ctx[c] = kwargs[c] if c in kwargs else None
-
 
     # Clean the code before evaluating. For now, we just change usage of `input_node` so the passed
     # variable is a string, if it isn't (instead of `input_node(a)` it's to be `input_node('a')`.
     code = re.sub(r'input_node\(([^\'"].*?)\)', r'input_node("\1")', code)
 
     eva = _Puter(code=code, ctx=ctx, workflow=workflow, prompt=prompt, unique_id=unique_id)
-    value = eva.execute()
+    values = eva.execute()
 
-    if value is not None:
-      if output == 'INT':
-        value = int(value)
-      elif output == 'FLOAT':
-        value = float(value)
-      elif output == 'BOOL':
-        value = bool(value)
-      elif output == 'STRING':
-        if isinstance(value, (dict, list)):
-          value = json.dumps(value, indent=2)
-        else:
-          value = str(value)
-      elif output == '*':
-        # Do nothing, the output will be passed as-is. This could be anything and it's up to the
-        # user to control the intended output, like passing through an input value, etc.
-        pass
-    return (value,)
+    # Check if we have multiple outputs that the returned value is a tuple and raise if not.
+    if len(outputs) > 1 and not isinstance(values, tuple):
+      t = re.sub(r'^<[a-z]*\s(.*?)>$', r'\1', str(type(values)))
+      msg = (
+        f"When using multiple node outputs, the value from the code should be a 'tuple' with the"
+        f" number of items equal to the number of outputs. But value from code was of type {t}."
+      )
+      log_node_error(_NODE_NAME, f'{msg}\n')
+      raise ValueError(msg)
+
+    if len(outputs) == 1:
+      values = (values,)
+
+    if len(values) > len(outputs):
+      log_node_warn(
+        _NODE_NAME,
+        f"Expected value from code to be tuple with {len(outputs)} items, but value from code had"
+        f" {len(values)} items. Extra values will be dropped."
+      )
+    elif len(values) < len(outputs):
+      log_node_warn(
+        _NODE_NAME,
+        f"Expected value from code to be tuple with {len(outputs)} items, but value from code had"
+        f" {len(values)} items. Extra outputs will be null."
+      )
+
+    # Now, we'll go over out return tuple, and cast as the output types.
+    response = []
+    for i, output in enumerate(outputs):
+      value = values[i] if len(values) > i else None
+      if value is not None:
+        if output == 'INT':
+          value = int(value)
+        elif output == 'FLOAT':
+          value = float(value)
+        elif output == 'BOOL':
+          value = bool(value)
+        elif output == 'STRING':
+          if isinstance(value, (dict, list)):
+            value = json.dumps(value, indent=2)
+          else:
+            value = str(value)
+        elif output == '*':
+          # Do nothing, the output will be passed as-is. This could be anything and it's up to the
+          # user to control the intended output, like passing through an input value, etc.
+          pass
+      response.append(value)
+    return tuple(response)
 
 
 class _Puter:
@@ -211,7 +246,7 @@ class _Puter:
       self._prompt_nodes = [{'id': id} | {**node} for id, node in self._prompt.items()]
     self._prompt_node = [n for n in self._prompt_nodes if n['id'] == unique_id][0]
 
-  def execute(self, code=str | None) -> Any:
+  def execute(self, code=Optional[str]) -> Any:
     """Evaluates a the code block."""
     code = code or self._code
     node = ast.parse(self._code)
@@ -224,7 +259,7 @@ class _Puter:
         break
     return last_value
 
-  def _get_nodes(self, node_id: int | str | re.Pattern | None = None) -> list[Any]:
+  def _get_nodes(self, node_id: Union[int, str, re.Pattern, None] = None) -> list[Any]:
     """Get a list of the nodes that match the node_id, or all the nodes in the prompt."""
     nodes = self._prompt_nodes.copy()
     if not node_id:
@@ -241,7 +276,7 @@ class _Puter:
         found = [n for n in nodes if node_id == get_dict_value(n, '_meta.title', '')]
     return found
 
-  def _get_node(self, node_id: int | str | re.Pattern | None = None) -> Any | None:
+  def _get_node(self, node_id: Union[int, str, re.Pattern, None] = None) -> Union[Any, None]:
     """Returns a prompt-node from the hidden prompt."""
     if node_id is None:
       return self._prompt_node
@@ -260,7 +295,7 @@ class _Puter:
       log_node_warn(_NODE_NAME, f'No input node found for "{input_name}". ')
     return None
 
-  def _eval_statement(self, stmt: ast.stmt, ctx: dict, prev_stmt: ast.stmt | None = None):
+  def _eval_statement(self, stmt: ast.stmt, ctx: dict, prev_stmt: Union[ast.stmt, None] = None):
     """Evaluates an ast.stmt."""
 
     if '__returned__' in ctx:
@@ -326,11 +361,11 @@ class _Puter:
             raise
       return val
 
-    if isinstance(stmt, ast.List):
+    if isinstance(stmt, (ast.List, ast.Tuple)):
       value = []
       for elt in stmt.elts:
         value.append(self._eval_statement(elt, ctx=ctx))
-      return value
+      return tuple(value) if isinstance(stmt, ast.Tuple) else value
 
     # f-strings: https://www.basicexamples.com/example/python/ast-JoinedStr
     # Note, this will str() all evaluated items in the fstrings, and doesn't handle f-string
@@ -372,7 +407,7 @@ class _Puter:
         # A call, like my_dct.items(), or a named ctx list
         if isinstance(gen.iter, ast.Call):
           gen_iters = self._eval_statement(gen.iter, ctx=gen_ctx)
-        elif isinstance(gen.iter, (ast.Name, ast.Attribute)):
+        elif isinstance(gen.iter, (ast.Name, ast.Attribute, ast.List, ast.Tuple)):
           gen_iters = self._eval_statement(gen.iter, ctx=gen_ctx)
 
         for gen_iter in gen_iters:
