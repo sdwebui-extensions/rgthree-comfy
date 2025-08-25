@@ -5,18 +5,19 @@ import type {
   LGraphGroup,
   LGraphNode,
   LLink,
-} from "@comfyorg/litegraph";
+} from "@comfyorg/frontend";
 
 import {app} from "scripts/app.js";
-import { BaseCollectorNode } from "./base_node_collector.js";
-import { NodeTypesString, stripRgthree } from "./constants.js";
+import {BaseCollectorNode} from "./base_node_collector.js";
+import {NodeTypesString, stripRgthree} from "./constants.js";
 import {
   PassThroughFollowing,
   addConnectionLayoutSupport,
+  changeModeOfNodes,
   getConnectedInputNodesAndFilterPassThroughs,
   getConnectedOutputNodesAndFilterPassThroughs,
+  getGroupNodes,
 } from "./utils.js";
-import { ISerialisedNode } from "@comfyorg/litegraph/dist/types/serialisation.js";
 
 class NodeModeRepeater extends BaseCollectorNode {
   override readonly inputsPassThroughFollowing: PassThroughFollowing = PassThroughFollowing.ALL;
@@ -127,7 +128,7 @@ class NodeModeRepeater extends BaseCollectorNode {
           }
         }
       } else {
-        inputNode.mode = this.mode;
+        changeModeOfNodes(inputNode, this.mode);
       }
     }
 
@@ -158,18 +159,19 @@ class NodeModeRepeater extends BaseCollectorNode {
       for (const node of linkedNodes) {
         if (node.type !== NodeTypesString.NODE_MODE_RELAY) {
           // Use "to" as there may be other getters in the way to access this.mode directly.
-          node.mode = to;
+          changeModeOfNodes(node, to);
         }
       }
-    } else if (app.graph._groups?.length) {
+    } else if (this.graph?._groups?.length) {
       // No linked nodes.. check if we're in a group.
-      for (const group of app.graph._groups as LGraphGroup[]) {
+      for (const group of this.graph._groups as LGraphGroup[]) {
         group.recomputeInsideNodes();
-        if (group._nodes?.includes(this)) {
-          for (const node of group._nodes) {
+        const groupNodes = getGroupNodes(group);
+        if (groupNodes?.includes(this)) {
+          for (const node of groupNodes) {
             if (node !== this) {
               // Use "to" as there may be other getters in the way to access this.mode directly.
-              node.mode = to;
+              changeModeOfNodes(node, to);
             }
           }
         }

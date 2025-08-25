@@ -1,14 +1,20 @@
-import type {LGraph, LGraphNode} from "@comfyorg/litegraph";
-import type {IButtonWidget, IComboWidget, IWidget} from "@comfyorg/litegraph/dist/types/widgets.js";
+import type {
+  LGraph,
+  LGraphNode,
+  ISerialisedNode,
+  IButtonWidget,
+  IComboWidget,
+  IWidget,
+  IBaseWidget,
+} from "@comfyorg/frontend";
 import type {ComfyApp} from "@comfyorg/frontend";
-import type { RgthreeBaseVirtualNode } from "./base_node.js";
+import type {RgthreeBaseVirtualNode} from "./base_node.js";
 
 import {app} from "scripts/app.js";
 import {BaseAnyInputConnectedNode} from "./base_any_input_connected_node.js";
 import {NodeTypesString} from "./constants.js";
-import {addMenuItem} from "./utils.js";
+import {addMenuItem, changeModeOfNodes} from "./utils.js";
 import {rgthree} from "./rgthree.js";
-import {ISerialisedNode} from "@comfyorg/litegraph/dist/types/serialisation.js";
 
 const MODE_ALWAYS = 0;
 const MODE_MUTE = 2;
@@ -218,7 +224,7 @@ class FastActionsButton extends BaseAnyInputConnectedNode {
           const exposedActions: string[] = (node.constructor as any).exposedActions || [];
           widget = this.addWidget("combo", node.title, "None", "", {
             values: ["None", "Mute", "Bypass", "Enable", ...exposedActions],
-          });
+          }) as IWidget;
           widget.serializeValue = async (_node: LGraphNode, _index: number) => {
             return widget?.value;
           };
@@ -240,12 +246,12 @@ class FastActionsButton extends BaseAnyInputConnectedNode {
     return changed;
   }
 
-  override removeWidget(widgetOrSlot?: number | IWidget): void {
-    const widget = typeof widgetOrSlot === "number" ? this.widgets[widgetOrSlot] : widgetOrSlot;
-    if (widget && this.widgetToData.has(widget)) {
-      this.widgetToData.delete(widget);
+  override removeWidget(widget: IBaseWidget | IWidget | number | undefined): void {
+    widget = typeof widget === "number" ? this.widgets[widget] : widget;
+    if (widget && this.widgetToData.has(widget as IWidget)) {
+      this.widgetToData.delete(widget as IWidget);
     }
-    super.removeWidget(widgetOrSlot);
+    super.removeWidget(widget);
   }
 
   /**
@@ -266,11 +272,11 @@ class FastActionsButton extends BaseAnyInputConnectedNode {
       }
       if (node) {
         if (action === "Mute") {
-          node.mode = MODE_MUTE;
+          changeModeOfNodes(node, MODE_MUTE);
         } else if (action === "Bypass") {
-          node.mode = MODE_BYPASS;
+          changeModeOfNodes(node, MODE_BYPASS);
         } else if (action === "Enable") {
-          node.mode = MODE_ALWAYS;
+          changeModeOfNodes(node, MODE_ALWAYS);
         }
         // If there's a handleAction, always call it.
         if ((node as RgthreeBaseVirtualNode).handleAction) {
@@ -279,7 +285,7 @@ class FastActionsButton extends BaseAnyInputConnectedNode {
           }
           await (node as RgthreeBaseVirtualNode).handleAction(action);
         }
-        app.graph.change();
+        this.graph?.change();
         continue;
       }
       console.warn("Fast Actions Button has a widget without correct data.");

@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { BaseAnyInputConnectedNode } from "./base_any_input_connected_node.js";
 import { NodeTypesString } from "./constants.js";
-import { addMenuItem } from "./utils.js";
+import { addMenuItem, changeModeOfNodes } from "./utils.js";
 import { rgthree } from "./rgthree.js";
 const MODE_ALWAYS = 0;
 const MODE_MUTE = 2;
@@ -169,15 +169,15 @@ class FastActionsButton extends BaseAnyInputConnectedNode {
         }
         return changed;
     }
-    removeWidget(widgetOrSlot) {
-        const widget = typeof widgetOrSlot === "number" ? this.widgets[widgetOrSlot] : widgetOrSlot;
+    removeWidget(widget) {
+        widget = typeof widget === "number" ? this.widgets[widget] : widget;
         if (widget && this.widgetToData.has(widget)) {
             this.widgetToData.delete(widget);
         }
-        super.removeWidget(widgetOrSlot);
+        super.removeWidget(widget);
     }
     async executeConnectedNodes() {
-        var _a;
+        var _a, _b;
         for (const widget of this.widgets) {
             if (widget == this.buttonWidget) {
                 continue;
@@ -192,13 +192,13 @@ class FastActionsButton extends BaseAnyInputConnectedNode {
             }
             if (node) {
                 if (action === "Mute") {
-                    node.mode = MODE_MUTE;
+                    changeModeOfNodes(node, MODE_MUTE);
                 }
                 else if (action === "Bypass") {
-                    node.mode = MODE_BYPASS;
+                    changeModeOfNodes(node, MODE_BYPASS);
                 }
                 else if (action === "Enable") {
-                    node.mode = MODE_ALWAYS;
+                    changeModeOfNodes(node, MODE_ALWAYS);
                 }
                 if (node.handleAction) {
                     if (typeof action !== "string") {
@@ -206,7 +206,7 @@ class FastActionsButton extends BaseAnyInputConnectedNode {
                     }
                     await node.handleAction(action);
                 }
-                app.graph.change();
+                (_b = this.graph) === null || _b === void 0 ? void 0 : _b.change();
                 continue;
             }
             console.warn("Fast Actions Button has a widget without correct data.");

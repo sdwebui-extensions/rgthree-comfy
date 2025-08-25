@@ -5,9 +5,9 @@ import type {
   Vector2,
   Size,
   LGraphGroup,
-} from "@comfyorg/litegraph";
-import type {CanvasMouseEvent} from "@comfyorg/litegraph/dist/types/events.js";
-import type {Point} from "@comfyorg/litegraph/dist/interfaces.js";
+  CanvasMouseEvent,
+  Point,
+} from "@comfyorg/frontend";
 
 import {app} from "scripts/app.js";
 import {RgthreeBaseVirtualNode} from "./base_node.js";
@@ -15,12 +15,14 @@ import {NodeTypesString} from "./constants.js";
 import {SERVICE as FAST_GROUPS_SERVICE} from "./services/fast_groups_service.js";
 import {drawNodeWidget, fitString} from "./utils_canvas.js";
 import {RgthreeBaseWidget} from "./utils_widgets.js";
+import { changeModeOfNodes, getGroupNodes } from "./utils.js";
 
 const PROPERTY_SORT = "sort";
 const PROPERTY_SORT_CUSTOM_ALPHA = "customSortAlphabet";
 const PROPERTY_MATCH_COLORS = "matchColors";
 const PROPERTY_MATCH_TITLE = "matchTitle";
 const PROPERTY_SHOW_NAV = "showNav";
+const PROPERTY_SHOW_ALL_GRAPHS = "showAllGraphs";
 const PROPERTY_RESTRICTION = "toggleRestriction";
 
 /**
@@ -46,6 +48,7 @@ export abstract class BaseFastGroupsModeChanger extends RgthreeBaseVirtualNode {
   static "@matchColors" = {type: "string"};
   static "@matchTitle" = {type: "string"};
   static "@showNav" = {type: "boolean"};
+  static "@showAllGraphs" = {type: "boolean"};
   static "@sort" = {
     type: "combo",
     values: ["position", "alphanumeric", "custom alphabet"],
@@ -56,6 +59,7 @@ export abstract class BaseFastGroupsModeChanger extends RgthreeBaseVirtualNode {
     [PROPERTY_MATCH_COLORS]: string;
     [PROPERTY_MATCH_TITLE]: string;
     [PROPERTY_SHOW_NAV]: boolean;
+    [PROPERTY_SHOW_ALL_GRAPHS]: boolean;
     [PROPERTY_SORT]: string;
     [PROPERTY_SORT_CUSTOM_ALPHA]: string;
     [PROPERTY_RESTRICTION]: string;
@@ -71,6 +75,7 @@ export abstract class BaseFastGroupsModeChanger extends RgthreeBaseVirtualNode {
     this.properties[PROPERTY_MATCH_COLORS] = "";
     this.properties[PROPERTY_MATCH_TITLE] = "";
     this.properties[PROPERTY_SHOW_NAV] = true;
+    this.properties[PROPERTY_SHOW_ALL_GRAPHS] = true;
     this.properties[PROPERTY_SORT] = "position";
     this.properties[PROPERTY_SORT_CUSTOM_ALPHA] = "";
     this.properties[PROPERTY_RESTRICTION] = "default";
@@ -184,6 +189,10 @@ export abstract class BaseFastGroupsModeChanger extends RgthreeBaseVirtualNode {
           continue;
         }
       }
+      const showAllGraphs = this.properties?.[PROPERTY_SHOW_ALL_GRAPHS];
+      if (!showAllGraphs && group.graph !== app.canvas.getCurrentGraph()) {
+        continue;
+      }
       let isDirty = false;
       const widgetLabel = `Enable ${group.title}`;
       let widget = this.widgets.find((w) => w.label === widgetLabel) as FastGroupsToggleRowWidget;
@@ -191,7 +200,9 @@ export abstract class BaseFastGroupsModeChanger extends RgthreeBaseVirtualNode {
         // When we add a widget, litegraph is going to mess up the size, so we
         // store it so we can retrieve it in computeSize. Hacky..
         this.tempSize = [...this.size] as Size;
-        widget = this.addCustomWidget(new FastGroupsToggleRowWidget(group, this));
+        widget = this.addCustomWidget(
+          new FastGroupsToggleRowWidget(group, this),
+        ) as FastGroupsToggleRowWidget;
         this.setSize(this.computeSize());
         isDirty = true;
       }
@@ -235,7 +246,7 @@ export abstract class BaseFastGroupsModeChanger extends RgthreeBaseVirtualNode {
       }, 32);
     }
     setTimeout(() => {
-      app.graph.setDirtyCanvas(true, true);
+      this.graph?.setDirtyCanvas(true, true);
     }, 16);
     return size;
   }
@@ -293,7 +304,11 @@ export abstract class BaseFastGroupsModeChanger extends RgthreeBaseVirtualNode {
             <li><p>
               <code>${PROPERTY_SHOW_NAV}</code> - Add / remove a quick navigation arrow to take you
               to the group. <i>(default: true)</i>
-              </p></li>
+            </p></li>
+            <li><p>
+              <code>${PROPERTY_SHOW_ALL_GRAPHS}</code> - Show groups from all [sub]graphs in the
+              workflow. <i>(default: true)</i>
+            </p></li>
             <li><p>
               <code>${PROPERTY_SORT}</code> - Sort the toggles' order by "alphanumeric", graph
               "position", or "custom alphabet". <i>(default: "position")</i>
@@ -380,7 +395,7 @@ class FastGroupsToggleRowWidget extends RgthreeBaseWidget<{toggled: boolean}> {
 
   doModeChange(force?: boolean, skipOtherNodeCheck?: boolean) {
     this.group.recomputeInsideNodes();
-    const hasAnyActiveNodes = this.group._nodes.some((n) => n.mode === LiteGraph.ALWAYS);
+    const hasAnyActiveNodes = getGroupNodes(this.group).some((n) => n.mode === LiteGraph.ALWAYS);
     let newValue = force != null ? force : !hasAnyActiveNodes;
     if (skipOtherNodeCheck !== true) {
       // TODO: This work should probably live in BaseFastGroupsModeChanger instead of the widgets.
@@ -394,12 +409,10 @@ class FastGroupsToggleRowWidget extends RgthreeBaseWidget<{toggled: boolean}> {
         newValue = this.node.widgets.every((w) => !w.value || w === this);
       }
     }
-    for (const node of this.group._nodes) {
-      node.mode = (newValue ? this.node.modeOn : this.node.modeOff) as 1 | 2 | 3 | 4;
-    }
+    changeModeOfNodes(getGroupNodes(this.group), (newValue ? this.node.modeOn : this.node.modeOff));
     this.group.rgthree_hasAnyActiveNode = newValue;
     this.toggled = newValue;
-    app.graph.setDirtyCanvas(true, false);
+    this.group.graph?.setDirtyCanvas(true, false);
   }
 
   get toggled() {
@@ -407,6 +420,14 @@ class FastGroupsToggleRowWidget extends RgthreeBaseWidget<{toggled: boolean}> {
   }
   set toggled(value: boolean) {
     this.value.toggled = value;
+  }
+
+  toggle(value?: boolean) {
+    value = value == null ? !this.toggled : value;
+    if (value !== this.toggled) {
+      this.value.toggled = value;
+      this.doModeChange();
+    }
   }
 
   draw(
@@ -501,10 +522,7 @@ class FastGroupsToggleRowWidget extends RgthreeBaseWidget<{toggled: boolean}> {
           canvas.setDirty(true, true);
         }
       } else {
-        this.toggled = !this.value;
-        setTimeout(() => {
-          this.doModeChange();
-        }, 20);
+        this.toggle();
       }
     }
     return true;

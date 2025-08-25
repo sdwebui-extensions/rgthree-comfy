@@ -1,12 +1,19 @@
-import type {LGraph, LGraphCanvas, LGraphNode} from "@comfyorg/litegraph";
-import type {Point} from "@comfyorg/litegraph/dist/interfaces.js";
-import type {CanvasMouseEvent} from "@comfyorg/litegraph/dist/types/events.js";
+import type {
+  LGraph,
+  LGraphCanvas,
+  LGraphNode,
+  Point,
+  CanvasMouseEvent,
+  Subgraph,
+} from "@comfyorg/frontend";
 
 import {app} from "scripts/app.js";
 import {RgthreeBaseVirtualNode} from "./base_node.js";
 import {SERVICE as KEY_EVENT_SERVICE} from "./services/key_events_services.js";
+import {SERVICE as BOOKMARKS_SERVICE} from "./services/bookmarks_services.js";
 import {NodeTypesString} from "./constants.js";
 import {getClosestOrSelf, query} from "rgthree/common/utils_dom.js";
+import {wait} from "rgthree/common/shared_utils.js";
 
 /**
  * A bookmark node. Can be placed anywhere in the workflow, and given a shortcut key that will
@@ -46,7 +53,7 @@ export class Bookmark extends RgthreeBaseVirtualNode {
 
   constructor(title = Bookmark.title) {
     super(title);
-    const nextShortcutChar = getNextShortcut();
+    const nextShortcutChar = BOOKMARKS_SERVICE.getNextShortcut();
     this.addWidget(
       "text",
       "shortcut_key",
@@ -121,8 +128,12 @@ export class Bookmark extends RgthreeBaseVirtualNode {
     return false;
   }
 
-  canvasToBookmark() {
+  async canvasToBookmark() {
     const canvas = app.canvas as LGraphCanvas;
+    if (this.graph !== app.canvas.getCurrentGraph()) {
+      canvas.openSubgraph(this.graph as Subgraph);
+      await wait(16);
+    }
     // ComfyUI seemed to break us again, but couldn't repro. No reason to not check, I guess.
     // https://github.com/rgthree/rgthree-comfy/issues/71
     if (canvas?.ds?.offset) {
@@ -142,20 +153,3 @@ app.registerExtension({
     Bookmark.setUp();
   },
 });
-
-function isBookmark(node: LGraphNode): node is Bookmark {
-  return node.type === NodeTypesString.BOOKMARK;
-}
-
-function getExistingShortcuts() {
-  const graph: LGraph = app.graph;
-  const bookmarkNodes = graph._nodes.filter(isBookmark);
-  const usedShortcuts = new Set(bookmarkNodes.map((n) => n.shortcutKey));
-  return usedShortcuts;
-}
-
-const SHORTCUT_DEFAULTS = "1234567890abcdefghijklmnopqrstuvwxyz".split("");
-function getNextShortcut() {
-  const existingShortcuts = getExistingShortcuts();
-  return SHORTCUT_DEFAULTS.find((char) => !existingShortcuts.has(char)) ?? "1";
-}

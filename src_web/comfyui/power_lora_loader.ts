@@ -4,13 +4,13 @@ import type {
   Vector2,
   IContextMenuValue,
   IFoundSlot,
-  LGraphNodeConstructor,
-} from "@comfyorg/litegraph";
-import type {CanvasMouseEvent} from "@comfyorg/litegraph/dist/types/events.js";
-import type {ISerialisedNode} from "@comfyorg/litegraph/dist/types/serialisation.js";
-import type {ICustomWidget} from "@comfyorg/litegraph/dist/types/widgets";
+  CanvasMouseEvent,
+  ISerialisedNode,
+  ICustomWidget,
+  CanvasPointerEvent,
+} from "@comfyorg/frontend";
+import type {ComfyApiFormat, ComfyNodeDef} from "typings/comfy.js";
 import type {RgthreeModelInfo} from "typings/rgthree.js";
-import type {ComfyNodeDef} from "typings/comfy.js";
 
 import {app} from "scripts/app.js";
 import {RgthreeBaseServerNode} from "./base_node.js";
@@ -74,6 +74,39 @@ class RgthreePowerLoraLoader extends RgthreeBaseServerNode {
 
     // Prefetch loras list.
     rgthreeApi.getLoras();
+
+    // [🤮] If ComfyUI is loading from API JSON it doesn't pass us the actual information at all
+    // (like, in a `configure` call) and tries to set the widget data on its own. Unfortunately,
+    // since Power Lora Loader has dynamic widgets, this fails on ComfyUI's side. We can do so after
+    // the fact but, unfortuntely, we need to do it after a timeout since we don't have any
+    // information at this point to be able to tell what data we need (like, even the node id, let
+    // alone the actual data).
+    if (rgthree.loadingApiJson) {
+      const fullApiJson = rgthree.loadingApiJson;
+      setTimeout(() => {
+        this.configureFromApiJson(fullApiJson);
+      }, 16);
+    }
+  }
+
+  private configureFromApiJson(fullApiJson: ComfyApiFormat) {
+    if (this.id == null) {
+      const [n, v] = this.logger.errorParts("Cannot load from API JSON without node id.");
+      console[n]?.(...v);
+      return;
+    }
+    const nodeData =
+      fullApiJson[this.id] || fullApiJson[String(this.id)] || fullApiJson[Number(this.id)];
+    if (nodeData == null) {
+      const [n, v] = this.logger.errorParts(`No node found in API JSON for node id ${this.id}.`);
+      console[n]?.(...v);
+      return;
+    }
+    this.configure({
+      widgets_values: Object.values(nodeData.inputs).filter(
+        (input) => typeof (input as any)?.["lora"] === "string",
+      ),
+    });
   }
 
   /**
@@ -81,10 +114,16 @@ class RgthreePowerLoraLoader extends RgthreeBaseServerNode {
    * added in `onNodeCreated`, letting `super.configure` and do nothing, then create our lora
    * widgets and, finally, add back in our default widgets.
    */
-  override configure(info: ISerialisedNode): void {
+  override configure(
+    info: ISerialisedNode | {widgets_values: ISerialisedNode["widgets_values"]},
+  ): void {
     while (this.widgets?.length) this.removeWidget(0);
     this.widgetButtonSpacer = null;
-    super.configure(info);
+    // Since we may be calling into configure manually for just widgets_values setting (like, from
+    // API JSON) we want to only call the parent class's configure with a real ISerialisedNode data.
+    if ((info as ISerialisedNode).id != null) {
+      super.configure(info as ISerialisedNode);
+    }
 
     (this as any)._tempWidth = this.size[0];
     (this as any)._tempHeight = this.size[1];
@@ -118,7 +157,7 @@ class RgthreePowerLoraLoader extends RgthreeBaseServerNode {
     this.loraWidgetsCounter++;
     const widget = this.addCustomWidget(
       new PowerLoraLoaderWidget("lora_" + this.loraWidgetsCounter),
-    );
+    ) as PowerLoraLoaderWidget;
     if (lora) widget.setLora(lora);
     if (this.widgetButtonSpacer) {
       moveArrayItem(this.widgets, widget, this.widgets.indexOf(this.widgetButtonSpacer));
@@ -138,7 +177,7 @@ class RgthreePowerLoraLoader extends RgthreeBaseServerNode {
 
     this.widgetButtonSpacer = this.addCustomWidget(
       new RgthreeDividerWidget({marginTop: 4, marginBottom: 0, thickness: 0}),
-    );
+    ) as RgthreeDividerWidget;
 
     this.addCustomWidget(
       new RgthreeBetterButtonWidget(
@@ -322,7 +361,7 @@ class RgthreePowerLoraLoader extends RgthreeBaseServerNode {
     }
   }
 
-  static override setUp(comfyClass: LGraphNodeConstructor, nodeData: ComfyNodeDef) {
+  static override setUp(comfyClass: typeof LGraphNode, nodeData: ComfyNodeDef) {
     RgthreeBaseServerNode.registerForOverride(comfyClass, nodeData, NODE_CLASS);
   }
 
@@ -745,22 +784,22 @@ class PowerLoraLoaderWidget extends RgthreeBaseWidget<PowerLoraLoaderWidgetValue
     }
   }
 
-  onStrengthValUp(event: CanvasMouseEvent, pos: Vector2, node: TLGraphNode) {
+  onStrengthValUp(event: CanvasPointerEvent, pos: Vector2, node: TLGraphNode) {
     this.doOnStrengthValUp(event, false);
   }
 
-  onStrengthTwoValUp(event: CanvasMouseEvent, pos: Vector2, node: TLGraphNode) {
+  onStrengthTwoValUp(event: CanvasPointerEvent, pos: Vector2, node: TLGraphNode) {
     this.doOnStrengthValUp(event, true);
   }
 
-  private doOnStrengthValUp(event: CanvasMouseEvent, isTwo = false) {
+  private doOnStrengthValUp(event: CanvasPointerEvent, isTwo = false) {
     if (this.haveMouseMovedStrength) return;
     let prop: "strengthTwo" | "strength" = isTwo ? "strengthTwo" : "strength";
     const canvas = app.canvas as LGraphCanvas;
     canvas.prompt("Value", this.value[prop], (v: string) => (this.value[prop] = Number(v)), event);
   }
 
-  override onMouseUp(event: CanvasMouseEvent, pos: Vector2, node: TLGraphNode): boolean | void {
+  override onMouseUp(event: CanvasPointerEvent, pos: Vector2, node: TLGraphNode): boolean | void {
     super.onMouseUp(event, pos, node);
     this.haveMouseMovedStrength = false;
   }
@@ -804,7 +843,7 @@ const NODE_CLASS = RgthreePowerLoraLoader;
 /** Register the node. */
 app.registerExtension({
   name: "rgthree.PowerLoraLoader",
-  async beforeRegisterNodeDef(nodeType: LGraphNodeConstructor, nodeData: ComfyNodeDef) {
+  async beforeRegisterNodeDef(nodeType: typeof LGraphNode, nodeData: ComfyNodeDef) {
     if (nodeData.name === NODE_CLASS.type) {
       NODE_CLASS.setUp(nodeType, nodeData);
     }

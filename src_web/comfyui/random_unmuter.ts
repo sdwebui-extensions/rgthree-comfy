@@ -1,10 +1,10 @@
-import type { LGraphNode } from "@comfyorg/litegraph";
+import type {LGraphNode} from "@comfyorg/frontend";
 
 import {app} from "scripts/app.js";
-import { BaseAnyInputConnectedNode } from "./base_any_input_connected_node.js";
-import { NodeTypesString } from "./constants.js";
-import { rgthree } from "./rgthree.js";
-import { getConnectedInputNodesAndFilterPassThroughs } from "./utils.js";
+import {BaseAnyInputConnectedNode} from "./base_any_input_connected_node.js";
+import {NodeTypesString} from "./constants.js";
+import {rgthree} from "./rgthree.js";
+import {changeModeOfNodes, getConnectedInputNodesAndFilterPassThroughs} from "./utils.js";
 
 const MODE_MUTE = 2;
 const MODE_ALWAYS = 0;
@@ -67,14 +67,14 @@ class RandomUnmuterNode extends BaseAnyInputConnectedNode {
       if (allMuted) {
         this.tempEnabledNode = linkedNodes[Math.floor(Math.random() * linkedNodes.length)] || null;
         if (this.tempEnabledNode) {
-          this.tempEnabledNode.mode = this.modeOn;
+          changeModeOfNodes(this.tempEnabledNode, this.modeOn);
         }
       }
     }
   }
   onGraphtoPromptEnd(event: Event) {
     if (this.tempEnabledNode) {
-      this.tempEnabledNode.mode = this.modeOff;
+      changeModeOfNodes(this.tempEnabledNode, this.modeOff);
       this.tempEnabledNode = null;
     }
   }

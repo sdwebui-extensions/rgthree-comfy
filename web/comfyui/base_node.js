@@ -1,3 +1,4 @@
+import { app } from "../../scripts/app.js";
 import { ComfyWidgets } from "../../scripts/widgets.js";
 import { SERVICE as KEY_EVENT_SERVICE } from "./services/key_events_services.js";
 import { LogLevel, rgthree } from "./rgthree.js";
@@ -85,6 +86,7 @@ export class RgthreeBaseNode extends LGraphNode {
         if ((cloned === null || cloned === void 0 ? void 0 : cloned.properties) && !!window.structuredClone) {
             cloned.properties = structuredClone(cloned.properties);
         }
+        cloned.graph = this.graph;
         return cloned;
     }
     onModeChange(from, to) {
@@ -92,13 +94,18 @@ export class RgthreeBaseNode extends LGraphNode {
     async handleAction(action) {
         action;
     }
-    removeWidget(widgetOrSlot) {
+    removeWidget(widget) {
         var _a;
-        if (!this.widgets) {
-            return;
+        if (typeof widget === "number") {
+            widget = this.widgets[widget];
         }
-        const widget = typeof widgetOrSlot === "number" ? this.widgets[widgetOrSlot] : widgetOrSlot;
-        if (widget) {
+        if (!widget)
+            return;
+        const canUseComfyUIRemoveWidget = false;
+        if (canUseComfyUIRemoveWidget && typeof super.removeWidget === 'function') {
+            super.removeWidget(widget);
+        }
+        else {
             const index = this.widgets.indexOf(widget);
             if (index > -1) {
                 this.widgets.splice(index, 1);
@@ -109,8 +116,8 @@ export class RgthreeBaseNode extends LGraphNode {
     replaceWidget(widgetOrSlot, newWidget) {
         let index = null;
         if (widgetOrSlot) {
-            index = typeof widgetOrSlot === 'number' ? widgetOrSlot : this.widgets.indexOf(widgetOrSlot);
-            this.removeWidget(index);
+            index = typeof widgetOrSlot === "number" ? widgetOrSlot : this.widgets.indexOf(widgetOrSlot);
+            this.removeWidget(this.widgets[index]);
         }
         index = index != null ? index : this.widgets.length - 1;
         if (this.widgets.includes(newWidget)) {
@@ -171,10 +178,7 @@ export class RgthreeBaseNode extends LGraphNode {
             (_a = super.getExtraMenuOptions) === null || _a === void 0 ? void 0 : _a.apply(this, [canvas, options]);
         }
         else if ((_c = (_b = this.constructor.nodeType) === null || _b === void 0 ? void 0 : _b.prototype) === null || _c === void 0 ? void 0 : _c.getExtraMenuOptions) {
-            (_f = (_e = (_d = this.constructor.nodeType) === null || _d === void 0 ? void 0 : _d.prototype) === null || _e === void 0 ? void 0 : _e.getExtraMenuOptions) === null || _f === void 0 ? void 0 : _f.apply(this, [
-                canvas,
-                options,
-            ]);
+            (_f = (_e = (_d = this.constructor.nodeType) === null || _d === void 0 ? void 0 : _d.prototype) === null || _e === void 0 ? void 0 : _e.getExtraMenuOptions) === null || _f === void 0 ? void 0 : _f.apply(this, [canvas, options]);
         }
         const help = this.getHelp() || this.constructor.help;
         if (help) {

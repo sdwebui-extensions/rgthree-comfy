@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { SERVICE as CONFIG_SERVICE } from "./services/config_service.js";
+import { SERVICE as BOOKMARKS_SERVICE } from "./services/bookmarks_services.js";
 import { SERVICE as KEY_EVENT_SERVICE } from "./services/key_events_services.js";
 import { WorkflowLinkFixer } from "../../rgthree/common/link_fixer.js";
 import { injectCss, wait } from "../../rgthree/common/shared_utils.js";
@@ -114,6 +115,9 @@ class LogSession {
     warnParts(message, ...args) {
         return this.logParts(LogLevel.WARN, message, ...args);
     }
+    errorParts(message, ...args) {
+        return this.logParts(LogLevel.ERROR, message, ...args);
+    }
     newSession(name) {
         return new LogSession(`${this.name}${name}`);
     }
@@ -126,12 +130,12 @@ class Rgthree extends EventTarget {
         this.settingsDialog = null;
         this.progressBarEl = null;
         this.queueNodeIds = null;
-        this.version = CONFIG_SERVICE.getConfigValue('version');
+        this.version = CONFIG_SERVICE.getConfigValue("version");
         this.logger = new LogSession("[rgthree]");
         this.monitorBadLinksAlerted = false;
         this.monitorLinkTimeout = null;
         this.processingQueue = false;
-        this.loadingApiJson = false;
+        this.loadingApiJson = null;
         this.replacingReroute = null;
         this.processingMouseDown = false;
         this.processingMouseUp = false;
@@ -260,7 +264,7 @@ class Rgthree extends EventTarget {
         };
         const onGroupAdd = LGraphCanvas.onGroupAdd;
         LGraphCanvas.onGroupAdd = function (...args) {
-            const graph = app.graph;
+            const graph = app.canvas.getCurrentGraph();
             onGroupAdd.apply(this, [...args]);
             LGraphCanvas.onShowPropertyEditor({}, null, null, null, graph._groups[graph._groups.length - 1]);
         };
@@ -336,7 +340,7 @@ class Rgthree extends EventTarget {
         }, 1016);
     }
     getRgthreeIContextMenuValues() {
-        const [canvas, graph] = [app.canvas, app.graph];
+        const [canvas, graph] = [app.canvas, app.canvas.getCurrentGraph()];
         const selectedNodes = Object.values(canvas.selected_nodes || {});
         let rerouteNodes = [];
         if (selectedNodes.length) {
@@ -369,7 +373,7 @@ class Rgthree extends EventTarget {
                             ];
                             canvas.graph.add(node);
                             canvas.selectNode(node);
-                            app.graph.setDirtyCanvas(true, true);
+                            graph.setDirtyCanvas(true, true);
                         }
                     },
                     extra: { rgthree_doNotNest: true },
@@ -469,13 +473,13 @@ class Rgthree extends EventTarget {
             }
         };
         const loadApiJson = app.loadApiJson;
-        app.loadApiJson = async function () {
-            rgthree.loadingApiJson = true;
+        app.loadApiJson = async function (apiData, fileName) {
+            rgthree.loadingApiJson = apiData;
             try {
                 loadApiJson.apply(app, [...arguments]);
             }
             finally {
-                rgthree.loadingApiJson = false;
+                rgthree.loadingApiJson = null;
             }
         };
         const graphToPrompt = app.graphToPrompt;
@@ -700,18 +704,15 @@ class Rgthree extends EventTarget {
     }
 }
 function getBookmarks() {
-    const graph = app.graph;
-    const bookmarks = graph._nodes
-        .filter((n) => n.type === NodeTypesString.BOOKMARK)
-        .sort((a, b) => a.title.localeCompare(b.title))
-        .map((n) => ({
+    const bookmarks = BOOKMARKS_SERVICE.getCurrentBookmarks();
+    const bookmarkItems = bookmarks.map((n) => ({
         content: `[${n.shortcutKey}] ${n.title}`,
         className: "rgthree-contextmenu-item",
         callback: () => {
             n.canvasToBookmark();
         },
     }));
-    return !bookmarks.length
+    return !bookmarkItems.length
         ? []
         : [
             {
@@ -719,7 +720,7 @@ function getBookmarks() {
                 disabled: true,
                 className: "rgthree-contextmenu-item rgthree-contextmenu-label",
             },
-            ...bookmarks,
+            ...bookmarkItems,
         ];
 }
 export const rgthree = new Rgthree();
@@ -729,8 +730,8 @@ app.registerExtension({
     aboutPageBadges: [
         {
             label: `rgthree-comfy v${rgthree.version}`,
-            url: 'https://github.com/rgthree/rgthree-comfy',
-            icon: 'rgthree-comfy-about-badge-logo'
-        }
+            url: "https://github.com/rgthree/rgthree-comfy",
+            icon: "rgthree-comfy-about-badge-logo",
+        },
     ],
 });

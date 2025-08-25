@@ -5,11 +5,13 @@ import type {
   IFoundSlot,
   LGraphEventMode,
   LGraphNodeConstructor,
-} from "@comfyorg/litegraph";
-import type {ISerialisedNode} from "@comfyorg/litegraph/dist/types/serialisation.js";
+  ISerialisedNode,
+  IBaseWidget,
+} from "@comfyorg/frontend";
 import type {ComfyNodeDef} from "typings/comfy.js";
 import type {RgthreeBaseServerNodeConstructor} from "typings/rgthree.js";
 
+import {app} from "scripts/app.js";
 import {ComfyWidgets} from "scripts/widgets.js";
 import {SERVICE as KEY_EVENT_SERVICE} from "./services/key_events_services.js";
 import {LogLevel, rgthree} from "./rgthree.js";
@@ -162,6 +164,12 @@ export abstract class RgthreeBaseNode extends LGraphNode {
     if (cloned?.properties && !!window.structuredClone) {
       cloned.properties = structuredClone(cloned.properties);
     }
+    // [🤮] https://github.com/Comfy-Org/ComfyUI_frontend/issues/5037
+    // ComfyUI started throwing errors when some of our nodes wanted to remove inputs when cloning
+    // (like our dynamic inputs) because the disconnect method that's automatically called assumes
+    // there should be a graph. For now, I _think_ we can simply assign the current graph to avoid
+    // the error, which would then be overwritten when placed...
+    cloned.graph = this.graph;
     return cloned;
   }
 
@@ -179,15 +187,23 @@ export abstract class RgthreeBaseNode extends LGraphNode {
   }
 
   /**
-   * Guess this doesn't exist in Litegraph...
+   * This didn't exist in LiteGraph/Comfy, but now it's added. Ours was a bit more flexible, though.
    */
-  removeWidget(widgetOrSlot?: IWidget | number) {
-    if (!this.widgets) {
-      return;
+  override removeWidget(widget: IBaseWidget | IWidget | number | undefined): void {
+    if (typeof widget === "number") {
+      widget = this.widgets[widget];
     }
-    const widget = typeof widgetOrSlot === "number" ? this.widgets[widgetOrSlot] : widgetOrSlot;
-    if (widget) {
-      const index = this.widgets.indexOf(widget);
+    if (!widget) return;
+
+    // Comfy added their own removeWidget, but it's not fully rolled out to stable, so keep our
+    // original implementation.
+    // TODO: Actually, scratch that. The ComfyUI impl doesn't call widtget.onRemove?.() and so
+    // we shouldn't switch to it yet. See: https://github.com/Comfy-Org/ComfyUI_frontend/issues/5090
+    const canUseComfyUIRemoveWidget = false;
+    if (canUseComfyUIRemoveWidget && typeof super.removeWidget === 'function') {
+      super.removeWidget(widget as IBaseWidget);
+    } else {
+      const index = this.widgets.indexOf(widget as IWidget);
       if (index > -1) {
         this.widgets.splice(index, 1);
       }
@@ -201,8 +217,8 @@ export abstract class RgthreeBaseNode extends LGraphNode {
   replaceWidget(widgetOrSlot: IWidget | number | undefined, newWidget: IWidget) {
     let index = null;
     if (widgetOrSlot) {
-      index = typeof widgetOrSlot === 'number' ? widgetOrSlot : this.widgets.indexOf(widgetOrSlot);
-      this.removeWidget(index);
+      index = typeof widgetOrSlot === "number" ? widgetOrSlot : this.widgets.indexOf(widgetOrSlot);
+      this.removeWidget(this.widgets[index]!);
     }
     index = index != null ? index : this.widgets.length - 1;
     if (this.widgets.includes(newWidget)) {
@@ -283,10 +299,7 @@ export abstract class RgthreeBaseNode extends LGraphNode {
     if (super.getExtraMenuOptions) {
       super.getExtraMenuOptions?.apply(this, [canvas, options]);
     } else if (this.constructor.nodeType?.prototype?.getExtraMenuOptions) {
-      this.constructor.nodeType?.prototype?.getExtraMenuOptions?.apply(this, [
-        canvas,
-        options,
-      ]);
+      this.constructor.nodeType?.prototype?.getExtraMenuOptions?.apply(this, [canvas, options]);
     }
     // If we have help content, then add a menu item.
     const help = this.getHelp() || (this.constructor as any).help;
@@ -433,7 +446,7 @@ export class RgthreeBaseServerNode extends RgthreeBaseNode {
 
   static __registeredForOverride__: boolean = false;
   static registerForOverride(
-    comfyClass: LGraphNodeConstructor,
+    comfyClass: typeof LGraphNode,
     nodeData: ComfyNodeDef,
     rgthreeClass: RgthreeBaseServerNodeConstructor,
   ) {
